@@ -1,11 +1,10 @@
 name: Build NIFTY Profit Engine APK
 
 on:
-  workflow_dispatch:
   push:
-    paths:
-      - "*.zip"
-      - ".github/workflows/build-apk.yml"
+    branches:
+      - main
+  workflow_dispatch:
 
 jobs:
   build:
@@ -15,40 +14,73 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Find and extract Android project
-        run: |
-          set -e
-          ZIP_FILE=$(find . -maxdepth 1 -type f -name "*.zip" | head -n 1)
-          if [ -z "$ZIP_FILE" ]; then
-            echo "No project ZIP found"
-            exit 1
-          fi
-
-          mkdir -p build-src
-          unzip -q "$ZIP_FILE" -d build-src
-
-          echo "Extracted project:"
-          find build-src -maxdepth 2 -type f | head -50
-
-      - name: Set up Java
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: '17'
 
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.9"
+      - name: Find and unzip Android project
+        run: |
+          set -e
+
+          ZIP_FILE=$(find . -maxdepth 2 -type f -name "*.zip" | head -n 1)
+
+          if [ -z "$ZIP_FILE" ]; then
+            echo "ERROR: Android project ZIP not found."
+            exit 1
+          fi
+
+          echo "Found ZIP: $ZIP_FILE"
+
+          mkdir -p android-project
+          unzip -q "$ZIP_FILE" -d android-project
+
+          echo "Extracted files:"
+          find android-project -maxdepth 3 -type f | head -100
+
+      - name: Locate Gradle project
+        run: |
+          set -e
+
+          SETTINGS=$(find android-project -type f \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1)
+
+          if [ -z "$SETTINGS" ]; then
+            echo "ERROR: settings.gradle not found."
+            exit 1
+          fi
+
+          PROJECT_DIR=$(dirname "$SETTINGS")
+
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+
+          echo "Android project found at:"
+          echo "$PROJECT_DIR"
+
+      - name: Make Gradle executable
+        run: |
+          chmod +x "$PROJECT_DIR/gradlew" 2>/dev/null || true
 
       - name: Build APK
-        working-directory: build-src
         run: |
-          gradle assembleDebug --no-daemon
+          set -e
+
+          cd "$PROJECT_DIR"
+
+          if [ -f "./gradlew" ]; then
+            ./gradlew assembleDebug --stacktrace
+          else
+            gradle assembleDebug --stacktrace
+          fi
+
+      - name: Find APK
+        run: |
+          find "$PROJECT_DIR" -type f -name "*.apk" -print
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: NIFTY-Profit-Engine-V45-debug
-          path: build-src/app/build/outputs/apk/debug/app-debug.apk
+          name: NIFTY-Profit-Engine-APK
+          path: |
+            **/build/outputs/apk/debug/*.apk
           if-no-files-found: error
